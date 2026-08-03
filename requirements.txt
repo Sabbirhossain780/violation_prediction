@@ -1,0 +1,17 @@
+# Core ML Framework
+torch>=2.0.0            # Required for sparse tensor ops in TopK GCN and torch.compile compatibility
+numpy>=1.24.0           # Stable np.floor behavior with float arrays in spatial grid mapping
+pandas>=2.0.0           # Required for dt.floor('6H') temporal binning syntax and Excel multi-section parsing
+
+# Data I/O
+openpyxl>=3.1.0         # Backend engine for pd.read_excel() on .xlsx files (violation categories + raw data)
+pyyaml>=6.0             # Config file parsing in train.py, evaluate.py, and preprocessing.py
+
+# Training & Evaluation Utilities
+tqdm>=4.65.0            # Progress bars in training/evaluation loops
+scikit-learn>=1.3.0     # Baseline model utilities and additional metric computations
+
+# Visualization & Notebooks
+jupyter>=1.0.0          # Running loss gradient check notebook and EDA notebooks
+matplotlib>=3.7.0       # Spatial heatmap visualization and training curve plots
+seaborn>=0.12.0         # Statistical plots for loss distributions and metric comparisons

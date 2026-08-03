@@ -1,0 +1,226 @@
+# configs/base_config.yaml
+# ========================
+# Default hyperparameters for Multivariate Spatio-Temporal Traffic Violation Forecaster.
+# Updated: Domain-appropriate baseline framework for sparse event forecasting.
+
+data:
+  # === RAW DATA FILE SCHEMA ===
+  # Change these if the source police stop dataset columns change
+  raw_data_path: "data/raw/Traffic_Violations_20260801.csv"
+  geolocation_column: "Geolocation"
+  description_column: "Description"
+  date_column: "Date Of Stop"
+  time_column: "Time Of Stop"
+
+  # === VLOOKUP EXCEL PARSING CONFIGURATION ===
+  vlookup_path: "data/raw/violation_categories_gpt-5.4.xlsx"
+  vlookup_sheet_name: "Lookup Table (VLOOKUP)"
+
+  # Patterns that identify NON-DATA rows to skip during parsing
+  # Any row where ANY cell matches these patterns is excluded
+  vlookup_skip_patterns:
+    - "HOW TO USE"
+    - "TRAFFIC VIOLATION TYPE CLASSIFICATION"
+    - "AI SUMMARY"
+    - "Generated:"
+    - "Model: gpt"
+    - "Source: Traffic_Violations"
+    - "Records:"
+    - "Unique desc:"
+    - "Summary"
+    - "#|Violation type category"  # Summary table header row
+
+  # Column identification strategy: find columns by CONTENT not position
+  # The parser searches for a row containing these exact strings as headers
+  vlookup_header_markers:
+    category: "Violation type category"
+    description: "Raw violation description"
+
+  # Fallback category name — must match exactly what appears in the Excel
+  # This category is ALWAYS assigned the highest index (n_channels - 1)
+  fallback_category_name: "Other / miscellaneous"
+
+
+  # === OUTPUT DIRECTORY ===
+  processed_dir: "data/processed" 
+  
+  # === SPATIAL CONFIGURATION ===
+  grid_size_deg: 0.009
+  lat_min: 38.90
+  lon_min: -77.30
+  adjacency_radius_km: 1.5
+  lat_bounds: [38.8, 39.4]
+  lon_bounds: [-77.5, -76.8]
+
+  # === TEMPORAL CONFIGURATION ===
+  hours_per_bin: 6
+  hist_steps: 4
+  forecast_steps: 1
+
+  # === SEVERITY / ADMIN COLUMNS ===
+  # Missing columns produce warnings, not crashes
+  admin_columns: ["Citation", "ESERO", "SERO", "Warning"]
+  threat_columns:
+    - "Accident"
+    - "Alcohol"
+    - "Arrest"
+    - "Fatal"
+    - "Search Conducted"
+    - "Contraband Found"
+    - "Personal Injury"
+    - "Property Damage"
+    - "Belts"
+
+# ── Model Architecture (Ours) ─────────────────────────────────────────────────
+model:
+  # Embeddings
+  d_f: 64                       # Data embedding dim (larger for 58 sparse channels)
+  d_t: 32                       # Temporal embedding dim (d_diw=16 + d_tid=16)
+  d_s: 32                       # Spatial identity embedding dim
+  n_days: 7                     # Day-of-week categories
+  n_quarters: 4                 # Time-of-day quarters
+  embedding_dropout: 0.1
+
+  # Backbone
+  n_layers: 3                   # Number of encoder layers (L)
+  n_heads: 4                    # Multi-head attention heads
+  top_k_temporal: 3             # Top-K temporal neighbors per query
+  top_k_spatial_ratio: 0.2      # Fraction of spatial neighbors retained
+  d_model: 256                  # Gated MLP intermediate dimension
+  backbone_dropout: 0.1
+
+# ── Loss Function ──────────────────────────────────────────────────────────────
+loss:
+  lambda_count: 1.0             # Weight for NB + Relative Error count loss
+  lambda_admin: 0.5             # Weight for admin disposition CE loss
+  lambda_threat: 0.8            # Weight for threat flag focal BCE loss
+  beta_nb: 1.0                  # Relative error penalty weight within count loss
+  gamma_focal: 2.0              # Focal loss focusing parameter
+  hetero_eps: 1.0e-6            # Numerical stability for heterogeneity weights
+
+# ── Training Configuration ────────────────────────────────────────────────────
+training:
+  batch_size: 16
+  max_epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001          # AdamW decoupled weight decay
+  warmup_epochs: 5              # Linear LR warmup for NB stability
+  min_lr: 1.0e-6                # Cosine annealing minimum LR
+  grad_clip_norm: 1.0           # Max gradient norm for clipping
+
+  # Early stopping
+  patience: 15
+  monitor_metric: "val_composite_score"  # NOT vanilla MAE
+  monitor_mode: "max"           # Higher composite score = better
+
+  # Validation split (STRICT TEMPORAL — no random splitting)
+  val_ratio: 0.15               # Last 15% of time series
+  test_ratio: 0.15              # Final 15% after validation period
+
+# ── Baseline Framework ─────────────────────────────────────────────────────────
+# Three-tier system: Domain-specific → Adapted traffic → Ablations
+baselines:
+
+  # TIER 1: Spatio-Temporal Event/Crime Forecasting (True Domain Competitors)
+  tier1_event_models:
+    deepcrime:
+      enabled: true
+      paper: "AAAI 2018"
+      description: "GNN-based crime forecasting with spatial heterogeneity & temporal burstiness"
+      params:
+        hidden_dim: 128
+        n_gcn_layers: 2
+        dropout: 0.1
+      output_adaptation: "multi_task"   # Must produce count + admin + threat heads
+      loss_adaptation: "hybrid"         # Must use our NB+Focal+CE loss
+
+    st_shine:
+      enabled: true
+      paper: "KDD 2020"
+      description: "Hierarchical attention for multi-category urban incident prediction"
+      params:
+        hidden_dim: 128
+        n_attention_heads: 4
+        hierarchy_levels: 2
+      output_adaptation: "multi_task"
+      loss_adaptation: "hybrid"
+
+    mist:
+      enabled: true
+      paper: "ICDE 2021"
+      description: "Neural Hawkes process for multivariate sparse event streams"
+      params:
+        hidden_dim: 128
+        n_event_types: 58
+        intensity_layers: 2
+      output_adaptation: "count_only"   # Hawkes models don't natively do severity
+      loss_adaptation: "nb_only"        # Use only NB count loss for fair comparison
+
+    zinb_gnn:
+      enabled: true
+      paper: "Spatial Statistics 2022"
+      description: "GNN with Zero-Inflated Negative Binomial output layer"
+      params:
+        hidden_dim: 128
+        n_gcn_layers: 2
+        zero_inflation_gate: true
+      output_adaptation: "count_only"
+      loss_adaptation: "zinb_native"    # Uses its own ZINB loss (comparison point)
+
+  # TIER 2: Adapted Traffic Flow Models (Blueprint Validation Only)
+  # CRITICAL: All Tier 2 models MUST receive identical adaptations for fair comparison
+  tier2_adapted_traffic:
+    shared_adaptations:
+      virtual_sinkhole_node: true       # Add Virtual Node to their graph
+      loss_replacement: "hybrid"        # Replace MSE with our NB+Focal+CE
+      decoder_replacement: "multi_task" # Replace linear decoder with our 3-head
+      temporal_split: "strict"          # Same 70/15/15 temporal split as ours
+      normalization: "none"             # No z-score; our data is discrete counts
+
+    stgcn_adapted:
+      enabled: true
+      paper: "IJCAI 2018"
+      purpose: "Prove Event-Skip Attention + Sparse Categorical Embedding > standard GCN"
+      params:
+        Ks: 3
+        Kt: 3
+        blocks: [64, 128]
+
+    informer_adapted:
+      enabled: true
+      paper: "AAAI 2021"
+      purpose: "Validate that spatial modeling (TopK GCN) matters beyond pure temporal attention"
+      params:
+        d_model: 128
+        n_heads: 4
+        e_layers: 3
+        factor: 5
+
+  # TIER 3: Ablation Variants (Component Validation)
+  tier3_ablations:
+    w/o_event_skip_attention:
+      enabled: true
+      modification: "Replace EventSkipTemporalAttention with standard multi-head self-attention"
+    w/o_topk_gcn:
+      enabled: true
+      modification: "Use full adjacency matrix without TopK pruning"
+    w/o_multi_task:
+      enabled: true
+      modification: "Single count head only; remove admin and threat heads"
+    w/o_hybrid_loss:
+      enabled: true
+      modification: "Replace hybrid loss with vanilla MAE on count head only"
+    w/o_time_aware_spatial:
+      enabled: true
+      modification: "Replace E_tas with static learnable spatial embedding (no time modulation)"
+    w/o_heterogeneity_weight:
+      enabled: true
+      modification: "Remove W_i weighting from count loss; uniform weights"
+
+# ── Experiment Tracking ────────────────────────────────────────────────────────
+experiment:
+  name: "violation_forecast_base"
+  seed: 42
+  output_dir: "outputs"
+  log_interval: 10              # Log every N batches
+  save_top_k: 3                 # Keep top-K checkpoints by monitor_metric
