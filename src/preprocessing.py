@@ -193,7 +193,7 @@ def preprocess(config_path: str) -> None:
     n_unmapped = (df["channel_id"] == other_idx).sum()
     logger.info(f"Unmapped descriptions -> fallback: {n_unmapped:,} ({100*n_unmapped/len(df):.1f}%)")
 
-        # 6. Aggregate Tensors (Using fast groupby)
+    # 6. Aggregate Tensors (Using fast groupby)
     logger.info("Step 6: Aggregating tensors...")
     
     # OPTIMIZATION: Use int16 (2 bytes) instead of float32 (4 bytes). 
@@ -239,7 +239,7 @@ def preprocess(config_path: str) -> None:
     A[:n_physical, virtual_id] = 1.0
     logger.info(f"Adjacency matrix: {n_nodes} nodes, {int(A.sum()):,} edges")
 
-        # 8. Save
+    # 8. Save
     logger.info("Step 8: Saving processed tensors...")
     
     # Save X as both X.pt and Y_count.pt to avoid keeping a second copy in memory
@@ -249,3 +249,14 @@ def preprocess(config_path: str) -> None:
     torch.save(torch.from_numpy(Y_admin), out_dir / "Y_admin.pt")
     torch.save(torch.from_numpy(Y_threat), out_dir / "Y_threat.pt")
     torch.save(torch.from_numpy(A), out_dir / "adj_matrix.pt")
+
+    metadata = {
+        "n_nodes": n_nodes,
+        "n_channels": n_channels,
+        "n_admin": n_admin,
+        "n_threat": n_threat,
+        "hours_per_bin": hours,
+        "all_bins": all_bins,
+    }
+    torch.save(metadata, out_dir / "metadata.pt")
+    logger.info("Saved metadata.pt")

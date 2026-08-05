@@ -169,8 +169,12 @@ def main(config_path: str = None, checkpoint_path: str = None, model_name: str =
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[INFO] Device: {device} | Model: {model_name}")
 
-    metadata = torch.load(f"{cfg['data']['processed_dir']}/metadata.pt")
-    adj_matrix = torch.load(f"{cfg['data']['processed_dir']}/adj_matrix.pt").to(device)
+    metadata = torch.load(f"{cfg['data']['processed_dir']}/metadata.pt", weights_only=False)
+    if 'n_admin' not in metadata:
+        metadata['n_admin'] = len(cfg['data']['admin_columns'])
+    if 'n_threat' not in metadata:
+        metadata['n_threat'] = len(cfg['data']['threat_columns'])
+    adj_matrix = torch.load(f"{cfg['data']['processed_dir']}/adj_matrix.pt", weights_only=False).to(device)
 
     # Build model
     if model_name == "ours":
@@ -187,7 +191,7 @@ def main(config_path: str = None, checkpoint_path: str = None, model_name: str =
             ckpt_dir = PROJECT_ROOT / "outputs" / f"baselines/{model_name}"
         checkpoint_path = ckpt_dir / "best_model.pt"
 
-    ckpt = torch.load(checkpoint_path, map_location=device)
+    ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     if model_name == "ours":
         model["embedding"].load_state_dict(ckpt["embedding_state"])
         model["backbone"].load_state_dict(ckpt["backbone_state"])
@@ -206,7 +210,8 @@ def main(config_path: str = None, checkpoint_path: str = None, model_name: str =
         len(full_dataset), cfg["training"]["val_ratio"], cfg["training"]["test_ratio"],
     )
     test_ds = Subset(full_dataset, test_idx)
-    test_loader = DataLoader(test_ds, batch_size=cfg["training"]["batch_size"], shuffle=False, num_workers=2)
+    num_workers = cfg['training'].get('num_workers', 0)
+    test_loader = DataLoader(test_ds, batch_size=cfg["training"]["batch_size"], shuffle=False, num_workers=num_workers)
     print(f"[INFO] Test set: {len(test_ds)} samples (strict temporal split)")
 
     # Reconstruct loss with heterogeneity weights from TRAINING data only
@@ -219,14 +224,14 @@ def main(config_path: str = None, checkpoint_path: str = None, model_name: str =
         hetero_eps=cfg["loss"]["hetero_eps"],
     ).to(device)
 
-    X_full = torch.load(f"{cfg['data']['processed_dir']}/X.pt")
+    X_full = torch.load(f"{cfg['data']['processed_dir']}/X.pt", weights_only=False)
     n_total = len(full_dataset)
     n_test = int(n_total * cfg["training"]["test_ratio"])
     n_val = int(n_total * cfg["training"]["val_ratio"])
     n_train = n_total - n_val - n_test
     train_bins = n_train + cfg["data"]["hist_steps"] + cfg["data"]["forecast_steps"]
     X_train = X_full[:train_bins]
-    criterion.compute_heterogeneity_weights(X_train.to(device))
+    criterion.compute_heterogeneity_weights(X_train, target_device=device)
 
     # Run evaluation
     print("\n" + "=" * 60)

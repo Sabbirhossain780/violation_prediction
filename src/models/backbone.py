@@ -90,6 +90,9 @@ class EventSkipTemporalAttention(nn.Module):
         attn = top_k_mask
 
         attn = F.softmax(attn, dim=-1)
+        # Guard against all-empty-bin batches: softmax(-inf,...) → NaN → replace with 0
+        # so the residual connection z+out carries signal unchanged (correct for zero-event bins)
+        attn = torch.nan_to_num(attn, nan=0.0)
         attn = self.dropout(attn)
 
         # Aggregate values: [B, N, nh, H, dk] × [B, nh, H, H] → [B, N, nh, H, dk]

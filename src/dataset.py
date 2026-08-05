@@ -38,11 +38,11 @@ class ViolationForecastDataset(Dataset):
         self.split = split
 
         # Load preprocessed tensors
-        self.X = torch.load(f"{data_dir}/X.pt")              # [T, N, C]
-        self.Y_count = torch.load(f"{data_dir}/Y_count.pt")   # [T, N, C]
-        self.Y_admin = torch.load(f"{data_dir}/Y_admin.pt")   # [T, N, S_admin]
-        self.Y_threat = torch.load(f"{data_dir}/Y_threat.pt") # [T, N, S_threat]
-        self.metadata = torch.load(f"{data_dir}/metadata.pt")
+        self.X = torch.load(f"{data_dir}/X.pt", weights_only=False)              # [T, N, C]
+        self.Y_count = self.X                                # Share memory reference with X to save 4GB RAM
+        self.Y_admin = torch.load(f"{data_dir}/Y_admin.pt", weights_only=False)   # [T, N, S_admin]
+        self.Y_threat = torch.load(f"{data_dir}/Y_threat.pt", weights_only=False) # [T, N, S_threat]
+        self.metadata = torch.load(f"{data_dir}/metadata.pt", weights_only=False)
 
         self.n_nodes = self.metadata["n_nodes"]
         self.n_channels = self.metadata["n_channels"]
@@ -102,10 +102,10 @@ class ViolationForecastDataset(Dataset):
         hist_end = start + self.hist_steps
         future_end = hist_end + self.forecast_steps
 
-        x = self.X[start:hist_end]                    # [H, N, C]
-        y_count = self.Y_count[hist_end:future_end]    # [F, N, C]
-        y_admin = self.Y_admin[hist_end:future_end]    # [F, N, S_admin]
-        y_threat = self.Y_threat[hist_end:future_end]  # [F, N, S_threat]
+        x = self.X[start:hist_end].float()                    # [H, N, C]
+        y_count = self.Y_count[hist_end:future_end].float()    # [F, N, C]
+        y_admin = self.Y_admin[hist_end:future_end].float()    # [F, N, S_admin]
+        y_threat = self.Y_threat[hist_end:future_end].float()  # [F, N, S_threat]
 
         tim_hist = self.temporal_meta[start:hist_end]      # [H, 2]
         tim_future = self.temporal_meta[hist_end:future_end]  # [F, 2]

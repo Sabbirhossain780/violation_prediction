@@ -102,18 +102,33 @@ class HybridHeterogeneousLoss(nn.Module):
     def compute_heterogeneity_weights(
         self,
         full_count_tensor: torch.Tensor,
+        chunk_size: int = 1000,
+        target_device: Optional[torch.device] = None,
     ) -> torch.Tensor:
-        grid_means = full_count_tensor.float().mean(dim=(0, 2))
-        grid_vars = full_count_tensor.float().var(dim=(0, 2))
+        T, N, C = full_count_tensor.shape
+        M = T * C
+        
+        # Always compute accumulation on CPU to save CUDA VRAM
+        sum_x = torch.zeros(N, dtype=torch.float64, device="cpu")
+        sum_x2 = torch.zeros(N, dtype=torch.float64, device="cpu")
+        
+        for i in range(0, T, chunk_size):
+            chunk = full_count_tensor[i:i + chunk_size].to(device="cpu", dtype=torch.float64)
+            sum_x.add_(chunk.sum(dim=(0, 2)))
+            sum_x2.add_((chunk ** 2).sum(dim=(0, 2)))
+            
+        grid_means = (sum_x / M).float()
+        grid_vars = torch.clamp((sum_x2 / M) - (grid_means.double() ** 2), min=0.0).float()
 
         raw_weights = grid_vars / (grid_means + self.hetero_eps)
         normalized = raw_weights / (raw_weights.mean() + self.hetero_eps)
 
-        self._hetero_weights = normalized.to(full_count_tensor.device)
+        device = target_device or full_count_tensor.device
+        self._hetero_weights = normalized.to(device)
         print(f"[Loss] Heterogeneity weights computed: "
               f"min={normalized.min():.3f}, max={normalized.max():.3f}, "
               f"median={normalized.median():.3f}")
-        return normalized
+        return self._hetero_weights
 
     def forward(
         self,
@@ -148,7 +163,7 @@ class HybridHeterogeneousLoss(nn.Module):
             count_loss = count_loss_raw
 
         # ── Admin Loss ───────────────────────────────────────────────────────
-        B, F, N, S_admin = predictions["admin_logits"].shape
+        B, forecast_len, N, S_admin = predictions["admin_logits"].shape
         admin_logits_flat = predictions["admin_logits"].reshape(-1, S_admin)
         admin_target_flat = targets["y_admin"].reshape(-1, S_admin).argmax(dim=-1)
         admin_loss = F.cross_entropy(admin_logits_flat, admin_target_flat)

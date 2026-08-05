@@ -140,7 +140,9 @@ def forward_pass(model, batch, device, model_name='ours'):
     if model_name == 'ours':
         emb = model['embedding'](x, tim_hist)
         z = model['backbone'](emb, tim_hist, x)
-        preds = model['decoder'](z)
+        forecast_steps = batch['y_count'].shape[1]
+        z_forecast = z[:, -forecast_steps:]
+        preds = model['decoder'](z_forecast)
     else:
         # Baseline models have unified forward(x, tim) interface
         preds = model(x, tim_hist)
@@ -267,8 +269,12 @@ def main(config_path: str = None, model_name: str = 'ours'):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"[INFO] Device: {device} | Model: {model_name}")
 
-    metadata = torch.load(f"{cfg['data']['processed_dir']}/metadata.pt")
-    adj_matrix = torch.load(f"{cfg['data']['processed_dir']}/adj_matrix.pt").to(device)
+    metadata = torch.load(f"{cfg['data']['processed_dir']}/metadata.pt", weights_only=False)
+    if 'n_admin' not in metadata:
+        metadata['n_admin'] = len(cfg['data']['admin_columns'])
+    if 'n_threat' not in metadata:
+        metadata['n_threat'] = len(cfg['data']['threat_columns'])
+    adj_matrix = torch.load(f"{cfg['data']['processed_dir']}/adj_matrix.pt", weights_only=False).to(device)
 
     # Create datasets with IDENTICAL temporal split for all models
     full_dataset = ViolationForecastDataset(
@@ -281,8 +287,9 @@ def main(config_path: str = None, model_name: str = 'ours'):
     )
     train_ds = Subset(full_dataset, train_idx)
     val_ds = Subset(full_dataset, val_idx)
-    train_loader = DataLoader(train_ds, batch_size=cfg['training']['batch_size'], shuffle=True, num_workers=2)
-    val_loader = DataLoader(val_ds, batch_size=cfg['training']['batch_size'], shuffle=False, num_workers=2)
+    num_workers = cfg['training'].get('num_workers', 0)
+    train_loader = DataLoader(train_ds, batch_size=cfg['training']['batch_size'], shuffle=True, num_workers=num_workers)
+    val_loader = DataLoader(val_ds, batch_size=cfg['training']['batch_size'], shuffle=False, num_workers=num_workers)
 
     # Build model (ours or baseline)
     if model_name == 'ours':
@@ -291,7 +298,7 @@ def main(config_path: str = None, model_name: str = 'ours'):
         model = build_baseline_model(model_name, cfg, metadata, adj_matrix, device)
 
     # Precompute heterogeneity weights from training data only
-    X_full = torch.load(f"{cfg['data']['processed_dir']}/X.pt")
+    X_full = torch.load(f"{cfg['data']['processed_dir']}/X.pt", weights_only=False)
     train_bins = train_idx[-1] + cfg['data']['hist_steps'] + cfg['data']['forecast_steps']
     X_train = X_full[:train_bins]
 
@@ -303,7 +310,7 @@ def main(config_path: str = None, model_name: str = 'ours'):
         gamma_focal=cfg['loss']['gamma_focal'],
         hetero_eps=cfg['loss']['hetero_eps'],
     ).to(device)
-    criterion.compute_heterogeneity_weights(X_train.to(device))
+    criterion.compute_heterogeneity_weights(X_train, target_device=device)
 
     # Optimizer & Scheduler
     all_params = get_all_parameters(model, model_name)
